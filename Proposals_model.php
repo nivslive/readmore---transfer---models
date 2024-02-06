@@ -768,12 +768,15 @@ class Proposals_model extends App_Model
                 // Adicione outras colunas conforme necessário
             ];
 
+            $this->load->model('invoices_model');
 
             $this->db->insert(db_prefix() . 'invoices', $invoice_data);
     
             // Obtém o ID da fatura recém-inserida
             $invoice_id = $this->db->insert_id();
             
+            $this->invoices_model->send_invoice_due_notice($invoice_id);
+
             $this->INCREMENT_NEXT_INVOICE_NUMBER_IN_OPTIONS();
 
             // aplica o invoice id criado
