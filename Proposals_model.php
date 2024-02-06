@@ -753,6 +753,7 @@ class Proposals_model extends App_Model
                 'number_format' => get_option('invoice_number_format'),
                 'prefix' => get_option('invoice_prefix'),
                 'total' => $proposal_data['total'],
+                'hash' => app_generate_hash(),
                 'adjustment' => $proposal_data['adjustment'],
                 'addedfrom' => isset($proposal_data['addedfrom']) ? $proposal_data['addedfrom'] : 0,  // Verifique se existe o índice 'addedfrom'
                 'status' => 1, // Substitua com o valor apropriado para o status da fatura
