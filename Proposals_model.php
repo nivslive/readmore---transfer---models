@@ -10,7 +10,7 @@ class Proposals_model extends App_Model
 {
     private $statuses;
 
-    private $DESATIVATE_ALL_AUTOMATION = true;
+    private $DESATIVATE_ALL_AUTOMATION = false;
 
     private $copy = false;
 
@@ -770,13 +770,28 @@ class Proposals_model extends App_Model
                 // Adicione outras colunas conforme necessário
             ];
 
-            $this->load->model('invoices_model');
+
+
 
             $this->db->insert(db_prefix() . 'invoices', $invoice_data);
     
             // Obtém o ID da fatura recém-inserida
             $invoice_id = $this->db->insert_id();
             
+            //items
+            $proposal_items = get_items_by_type('proposal', $id);
+            // var_dump($proposal_items);die();
+            foreach($proposal_items as $p_item) 
+            {
+                $p_item['rel_type'] = 'invoice';
+                $p_item['rel_id'] = $invoice_id;
+                //tirar o id pra não haver duplicata
+                unset($p_item['id']);
+                // var_dump($p_item);die();
+                $this->db->insert(db_prefix() . 'itemable', $p_item);
+            }
+
+            $this->load->model('invoices_model');
             $this->invoices_model->send_invoice_due_notice($invoice_id);
 
             $this->INCREMENT_NEXT_INVOICE_NUMBER_IN_OPTIONS();
