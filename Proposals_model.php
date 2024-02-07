@@ -10,7 +10,7 @@ class Proposals_model extends App_Model
 {
     private $statuses;
 
-    private $DESATIVATE_ALL_AUTOMATION = false;
+    private $DESATIVATE_ALL_AUTOMATION = true;
 
     private $copy = false;
 
@@ -721,12 +721,12 @@ class Proposals_model extends App_Model
 
     public function automate_convert_lead_to_customer_if_proposal_is_status_3($proposal_id)
     {
-       $data = $this->db->where('id', $proposal_id)->get(db_prefix().'proposals')->row_array();
-       $id = $data['rel_id'];
-       $this->load->model('leads_model');
-       $model = $this->leads_model->convert_to_customer_by_existent_lead($id);
+        $data = $this->db->where('id', $proposal_id)->get(db_prefix().'proposals')->row_array();
+        $id = $data['rel_id'];
+        $this->load->model('leads_model');
+        $model = $this->leads_model->convert_to_customer_by_existent_lead($id);
        //var_dump($model);die();
-       return $model;
+        return $model;
     }
     
 
@@ -754,6 +754,8 @@ class Proposals_model extends App_Model
                 'prefix' => get_option('invoice_prefix'),
                 'total' => $proposal_data['total'],
                 'hash' => app_generate_hash(),
+                // accept mercado pago & paypal
+                'allowed_payment_modes' => 'a:2:{i:0;s:11:"mercadopago";i:1;s:15:"paypal_checkout";}',
                 'adjustment' => $proposal_data['adjustment'],
                 'addedfrom' => isset($proposal_data['addedfrom']) ? $proposal_data['addedfrom'] : 0,  // Verifique se existe o índice 'addedfrom'
                 'status' => 1, // Substitua com o valor apropriado para o status da fatura
