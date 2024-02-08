@@ -806,6 +806,8 @@ class Proposals_model extends App_Model
             
             $this->db->where('id', $id);
             $this->db->update(db_prefix().'proposals', $proposals_update_data);
+            
+            redirect('invoice/' . $invoice_id . '/' . $invoice_data['hash']);
         }
     }
     /**
