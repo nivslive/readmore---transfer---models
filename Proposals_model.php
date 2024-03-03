@@ -4,6 +4,8 @@ use app\services\AbstractKanban;
 use app\services\proposals\ProposalsPipeline;
 use Carbon\Carbon;
 
+require_once(__DIR__ . '/../../modules/appointly/models/Appointly_model.php');
+
 defined('BASEPATH') or exit('No direct script access allowed');
 
 class Proposals_model extends App_Model
@@ -723,9 +725,10 @@ class Proposals_model extends App_Model
     {
         $data = $this->db->where('id', $proposal_id)->get(db_prefix().'proposals')->row_array();
         $id = $data['rel_id'];
+//        var_dump($data);die();
         $this->load->model('leads_model');
         $model = $this->leads_model->convert_to_customer_by_existent_lead($id);
-       //var_dump($model);die();
+//        var_dump($model);die();
         return $model;
     }
     
@@ -735,15 +738,20 @@ class Proposals_model extends App_Model
         $proposal_data = $optionalData === null ? $this->db->where('id', $id)->get(db_prefix().'proposals')->row_array() : $optionalData;
         $invoice_data = [];
 
-
-        
         if(isset($proposal_data) && $proposal_data['status'] === '3')
         {
 
-            $new_client_id_if_is_lead_yet = $this->automate_convert_lead_to_customer_if_proposal_is_status_3($id);
-            $clientid = $new_client_id_if_is_lead_yet['id'];
+            if($proposal_data['rel_type'] === 'lead') {
+                $client_id = $this->automate_convert_lead_to_customer_if_proposal_is_status_3($id);
+                // var_dump($client_id);die();
+                $client_id = $client_id['id'];
+            } else {
+                $client_id = $proposal_data['rel_id'];
+            }
+
+            // var_dump($proposal_data['rel_type']);die();
             $invoice_data = [
-                'clientid' => $clientid,
+                'clientid' => $client_id,
                 'datesend' => Carbon::now()->format('Y-m-d H:i:s'),
                 'date' => Carbon::now()->format('Y-m-d H:i:s'),
                 'duedate' => $proposal_data['open_till'],
@@ -755,7 +763,7 @@ class Proposals_model extends App_Model
                 'total' => $proposal_data['total'],
                 'hash' => app_generate_hash(),
                 // accept mercado pago & paypal
-                'allowed_payment_modes' => 'a:2:{i:0;s:11:"mercadopago";i:1;s:15:"paypal_checkout";}',
+                'allowed_payment_modes' => 'a:2:{i:0;s:11:"gerencianet";i:1;s:6:"paypal";}',
                 'adjustment' => $proposal_data['adjustment'],
                 'addedfrom' => isset($proposal_data['addedfrom']) ? $proposal_data['addedfrom'] : 0,  // Verifique se existe o índice 'addedfrom'
                 'status' => 1, // Substitua com o valor apropriado para o status da fatura
@@ -767,7 +775,8 @@ class Proposals_model extends App_Model
                 'billing_zip' => $proposal_data['zip'],
                 'billing_country' => $proposal_data['country'],
                 'short_link' => 'convertido', // Adiciona a coluna shortlink
-                // Adicione outras colunas conforme necessário
+                'cancel_overdue_reminders' => 0,
+                'addedfrom' => !DEFINED('CRON') ? get_staff_user_id() : 0,
             ];
 
 
@@ -801,12 +810,85 @@ class Proposals_model extends App_Model
             
             if($proposal_data['rel_type'] === 'lead') {
                 $proposals_update_data['rel_type'] = 'customer';
-                $proposals_update_data['rel_id'] = $clientid;
+                $proposals_update_data['rel_id'] = $client_id;
+            }
+
+            
+
+            // PARA AGENDAR A VIAGEM
+
+            $dadosViagem = [
+                'dataChegada' => $proposal_data['custom_fields']['proposal'][9],
+                'dataIda' => $proposal_data['custom_fields']['proposal'][8],
+                'enderecoChegada' => $proposal_data['custom_fields']['proposal'][14],
+            ];
+            //var_dump($dadosViagem);die();
+
+            if(!empty($dadosViagem['dataChegada']) && !empty($dadosViagem['dataIda']) && !empty($dadosViagem['enderecoChegada'])) {
+                $lead = $this->db->where('client_id', $client_id)->get(db_prefix().'leads');
+                // Se não houver um lead, cria um novo
+                if ($lead) {
+                    // Dados do lead a serem inseridos
+                    $lead_data = [
+                        'address' => $invoice_data['billing_street'], // Use o endereço da fatura como endereço do lead
+                        'city' => $invoice_data['billing_city'],
+                        'state' => $invoice_data['billing_state'],
+                        'zip' => $invoice_data['billing_zip'],
+                        'country' => $invoice_data['billing_country'] ?? '',
+                        'email' => $proposal_data['email'], // Use o email do cliente como email do lead
+                        'name' => $proposal_data['proposal_to'], // Use o nome do cliente como nome do lead
+                        'phonenumber' => $proposal_data['phone'], // Use o número de telefone do cliente como número de telefone do lead
+                    ];
+    
+                    // Insere o novo lead no banco de dados
+                    $this->db->insert(db_prefix().'leads', $lead_data);
+    
+                    // Obtém o ID do lead recém-criado
+                    $new_lead_id = $this->db->insert_id();
+    
+                    // Atualiza o cliente para indicar que ele está associado a este lead
+                    $this->db->where('userid', $client_id)->update(db_prefix().'clients', ['leadid' => $new_lead_id]);
+    
+                    // Defina o status do lead como cliente, se necessário
+                    $this->db->where('isdefault', 1);
+                    $status_client_id = $this->db->get(db_prefix().'leads_status')->row()->id;
+                    $this->db->where('id', $new_lead_id)->update(db_prefix().'leads', ['status' => $status_client_id]);
+    
+                    // Envie um e-mail para criar a senha do cliente
+                    $this->load->model('authentication_model');
+                    $mail = $this->authentication_model->set_password_email($proposal_data['email'], 0);
+    
+                    // $this->load->model('appointly/appointly_model', 'apm');
+                    $appointly_data = [];
+                    $appointly_data['rel_type'] = 'lead_related';
+                    $appointly_data['rel_id'] = $new_lead_id;
+                    $appointly_data['attendees'] = [get_staff_user_id()];
+                    $appointly_data['date'] = $dadosViagem['dataIda'];
+                    $appointly_data['type_id'] = 1;
+                    $appointly_model = new Appointly_model();
+                    $appointly_model->insert_appointment($appointly_data);
+                }
+    
+                if (!$lead) {
+                    // $this->load->model('appointly/appointly_model', 'apm');
+                    $appointly_data = [];
+                    $appointly_data['rel_type'] = 'lead_related';
+                    $appointly_data['rel_id'] = $lead['id'];
+                    $appointly_data['attendees'] = get_staff_user_id();
+                    $appointly_data['date'] = $dadosViagem['dataIda'];
+                    $appointly_data['type_id'] = 1;
+                    $appointly_model = new Appointly_model();
+                    $appointly_model->insert_appointment($appointly_data);
+    
+                } 
+                
+    
+
             }
             
             $this->db->where('id', $id);
             $this->db->update(db_prefix().'proposals', $proposals_update_data);
-            
+
             redirect('invoice/' . $invoice_id . '/' . $invoice_data['hash']);
         }
     }

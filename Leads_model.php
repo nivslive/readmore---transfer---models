@@ -64,6 +64,7 @@ class Leads_model extends App_Model
     {
 
         $client = $this->db->where('leadid',$id)->get(db_prefix().'clients');
+        // var_dump($client->row_array());die();
         if($client->num_rows() === 0) {
             $lead = $this->db->where('id', $id)->get(db_prefix().'leads')->row_array();
             $data = [];
@@ -112,7 +113,8 @@ class Leads_model extends App_Model
                 hooks()->do_action('lead_converted_to_customer', ['lead_id' => $lead['id'], 'customer_id' => $new_client_id]);
                 return ['already_created' => false, 'id' => $new_client_id];
             }
-        } else {
+        } 
+        else {
             $already_created_client_id = $client->row_array()['userid'];
             return ['already_created' => true, 'id' => $already_created_client_id];
         }
