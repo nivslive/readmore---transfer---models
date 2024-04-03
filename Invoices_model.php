@@ -494,6 +494,7 @@ class Invoices_model extends App_Model
                 $this->increment_next_number();
             }
 
+
             foreach ($items as $key => $item) {
                 if ($itemid = add_new_sales_item_post($item, $insert_id, 'invoice')) {
                     if (isset($billed_tasks[$key])) {

@@ -77,6 +77,7 @@ class Leads_model extends App_Model
             $data['company'] = $lead['name'];
             $data['phonenumber'] = $lead['phonenumber'];
             $data['leadid'] = $id;
+            $data['addedfrom']   = get_staff_user_id();
             $this->load->model('clients_model');
             $new_client_id = $this->clients_model->add($data, true);
             // atualizar o contato principal

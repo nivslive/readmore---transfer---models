@@ -732,11 +732,34 @@ class Proposals_model extends App_Model
         return $model;
     }
     
+    public function get_custom_fields($rel_id) {
+        $fields = $this->db->get(db_prefix() . 'customfields')->result_array();
+        $data = [];
+        foreach($fields as $field) {
+            $value = get_custom_field_value($rel_id, $field['id'], 'proposal', false);
+            array_push($data, $value);
+        }
+        return $data;
+    }
 
     public function automate_create_invoice_if_proposal_status_has_3($id, $optionalData = null)
     {
-        $proposal_data = $optionalData === null ? $this->db->where('id', $id)->get(db_prefix().'proposals')->row_array() : $optionalData;
+        
+        $this->load->model('invoices_model');
+
+        //error_reporting(E_ALL ^ E_NOTICE);  
+        //$proposal_data = $optionalData === null ? $this->db->where('id', $id)->get(db_prefix().'proposals')->row_array() : $optionalData;
+        // $proposal_data = $this->db->where('id', $id)->get(db_prefix().'proposals')->row_array();
+        $proposal_data = $this->get($id);
+        $proposal_data = json_decode(json_encode($proposal_data), true);
         $invoice_data = [];
+        
+        // if(isset($proposal_data) && !isset($proposal_data['custom_fields'])) {
+            $proposal_data['custom_fields']['proposal'] = $this->get_custom_fields($proposal_data['id']);
+            //var_dump($proposal_data);die();
+        // }
+        //var_dump($proposal_data);die();
+
 
         if(isset($proposal_data) && $proposal_data['status'] === '3')
         {
@@ -754,7 +777,7 @@ class Proposals_model extends App_Model
                 'clientid' => $client_id,
                 'datesend' => Carbon::now()->format('Y-m-d H:i:s'),
                 'date' => Carbon::now()->format('Y-m-d H:i:s'),
-                'duedate' => $proposal_data['open_till'],
+                'duedate' => Carbon::now()->addDay(31)->format('Y-m-d H:i:s'),
                 'currency' => $proposal_data['currency'],
                 'subtotal' => $proposal_data['subtotal'],
                 'number' => get_option('next_invoice_number'),
@@ -773,20 +796,27 @@ class Proposals_model extends App_Model
                 'billing_city' => $proposal_data['city'],
                 'billing_state' => $proposal_data['state'],
                 'billing_zip' => $proposal_data['zip'],
-                'billing_country' => $proposal_data['country'],
+                'billing_country' => $proposal_data['country'] ?? '',
                 'short_link' => 'convertido', // Adiciona a coluna shortlink
                 'cancel_overdue_reminders' => 0,
                 'addedfrom' => !DEFINED('CRON') ? get_staff_user_id() : 0,
             ];
 
+            if(!is_null($proposal_data['invoice_id']) || !empty($proposal_data['invoice_id'])) {  
+                $this->db->where('id', $proposal_data['invoice_id']);
+                $this->db->update(db_prefix() . 'invoices', $invoice_data);
+                // Obtém o ID da fatura recém-inserida
+                $invoice_id = $proposal_data['invoice_id'];
+            } else {
+                $this->db->insert(db_prefix() . 'invoices', $invoice_data);
+                // Obtém o ID da fatura recém-inserida
+                $invoice_id = $this->db->insert_id();
+            }
 
-
-
-            $this->db->insert(db_prefix() . 'invoices', $invoice_data);
     
-            // Obtém o ID da fatura recém-inserida
-            $invoice_id = $this->db->insert_id();
-            
+
+            // $savedInvoice = update_invoice_status($invoice_id);
+            // var_dump($savedInvoice); echo "invoiceid"; die();        
             //items
             $proposal_items = get_items_by_type('proposal', $id);
             // var_dump($proposal_items);die();
@@ -800,7 +830,6 @@ class Proposals_model extends App_Model
                 $this->db->insert(db_prefix() . 'itemable', $p_item);
             }
 
-            $this->load->model('invoices_model');
             $this->invoices_model->send_invoice_due_notice($invoice_id);
 
             $this->INCREMENT_NEXT_INVOICE_NUMBER_IN_OPTIONS();
@@ -816,18 +845,20 @@ class Proposals_model extends App_Model
             
 
             // PARA AGENDAR A VIAGEM
-
+            //var_dump($proposal_data['custom_fields']);die();
             $dadosViagem = [
-                'dataChegada' => $proposal_data['custom_fields']['proposal'][9],
+                'dataChegada' => $proposal_data['custom_fields']['proposal'][7],
                 'dataIda' => $proposal_data['custom_fields']['proposal'][8],
-                'enderecoChegada' => $proposal_data['custom_fields']['proposal'][14],
+                'enderecoChegada' => $proposal_data['custom_fields']['proposal'][13],
+                'enderecoIda' => $proposal_data['custom_fields']['proposal'][14],
             ];
-            //var_dump($dadosViagem);die();
 
-            if(!empty($dadosViagem['dataChegada']) && !empty($dadosViagem['dataIda']) && !empty($dadosViagem['enderecoChegada'])) {
+            //var_dump($dadosViagem, !empty($dadosViagem['dataChegada']) || !empty($dadosViagem['dataIda']));die();
+            if(!empty($dadosViagem['dataChegada']) || !empty($dadosViagem['dataIda'])) {
                 $lead = $this->db->where('client_id', $client_id)->get(db_prefix().'leads');
                 // Se não houver um lead, cria um novo
-                if ($lead) {
+                if ($this->db->affected_rows() === 0) {
+
                     // Dados do lead a serem inseridos
                     $lead_data = [
                         'address' => $invoice_data['billing_street'], // Use o endereço da fatura como endereço do lead
@@ -857,28 +888,89 @@ class Proposals_model extends App_Model
                     // Envie um e-mail para criar a senha do cliente
                     $this->load->model('authentication_model');
                     $mail = $this->authentication_model->set_password_email($proposal_data['email'], 0);
-    
+                    $lead = $this->db->where('id', $new_lead_id)->get(db_prefix().'leads');
+                    // echo "no lead!"; var_dump($lead->row()->name);die();
                     // $this->load->model('appointly/appointly_model', 'apm');
-                    $appointly_data = [];
-                    $appointly_data['rel_type'] = 'lead_related';
-                    $appointly_data['rel_id'] = $new_lead_id;
-                    $appointly_data['attendees'] = [get_staff_user_id()];
-                    $appointly_data['date'] = $dadosViagem['dataIda'];
-                    $appointly_data['type_id'] = 1;
-                    $appointly_model = new Appointly_model();
-                    $appointly_model->insert_appointment($appointly_data);
+
+                    if(!empty($dadosViagem['dataChegada'])){
+                        $appointly_data = [];
+                        $appointly_data['rel_type'] = 'lead_related';
+                        $appointly_data['rel_id'] = $new_lead_id;
+                        $appointly_data['google'] = true;
+                        $appointly_data['attendees'] = [get_staff_user_id()];
+                        $appointly_data['date'] = $dadosViagem['dataChegada'];
+                        $appointly_data['address'] =  $dadosViagem['enderecoChegada'];
+                        $appointly_data['subject'] = "Transfer";
+                        $appointly_data['description'] = "Serviço: Transfer" 
+                        . " Nome: " . $lead->row()->name . ","
+                        . " Origem: " . $dadosViagem['enderecoIda'] . ","
+                        . " Destino: " . $dadosViagem['enderecoChegada'] . ","
+                        . " Tipo de viagem: Volta";
+
+                        $appointly_model = new Appointly_model();
+                        $appointly_model->insert_appointment($appointly_data);
+                    }
+
+                    if(!empty($dadosViagem['dataIda'])){
+                        $appointly_data = [];
+                        $appointly_data['rel_type'] = 'lead_related';
+                        $appointly_data['rel_id'] = $new_lead_id;
+                        $appointly_data['google'] = true;
+                        $appointly_data['attendees'] = [get_staff_user_id()];
+                        $appointly_data['date'] = $dadosViagem['dataIda'];
+                        $appointly_data['address'] =  $dadosViagem['enderecoChegada'];
+                        $appointly_data['subject'] = "Transfer";
+                        $appointly_data['description'] = "Serviço: Transfer" 
+                        . " Nome: " . $lead->row()->name . ","
+                        . " Origem: " . $dadosViagem['enderecoIda'] . ","
+                        . " Destino: " . $dadosViagem['enderecoChegada'] . ","
+                        . " Tipo de viagem: Ida";
+
+                        $appointly_model = new Appointly_model();
+                        $appointly_model->insert_appointment($appointly_data);
+                    }
                 }
     
-                if (!$lead) {
+                if ($this->db->affected_rows() > 0) {
+                  //  echo "lead!"; var_dump($lead->row());die();
                     // $this->load->model('appointly/appointly_model', 'apm');
-                    $appointly_data = [];
-                    $appointly_data['rel_type'] = 'lead_related';
-                    $appointly_data['rel_id'] = $lead['id'];
-                    $appointly_data['attendees'] = get_staff_user_id();
-                    $appointly_data['date'] = $dadosViagem['dataIda'];
-                    $appointly_data['type_id'] = 1;
-                    $appointly_model = new Appointly_model();
-                    $appointly_model->insert_appointment($appointly_data);
+                    if(!empty($dadosViagem['dataChegada'])){
+                        $appointly_data = [];
+                        $appointly_data['rel_type'] = 'lead_related';
+                        $appointly_data['rel_id'] = $lead->row()->id;
+                        $appointly_data['google'] = true;
+                        $appointly_data['attendees'] = get_staff_user_id();
+                        $appointly_data['date'] = $dadosViagem['dataChegada'];
+                        $appointly_data['address'] =  $dadosViagem['enderecoChegada'];
+                        $appointly_data['subject'] = "Transfer";
+                        $appointly_data['description'] = "Serviço: Transfer" 
+                        . " Nome: " . $lead->row()->name . ","
+                        . " Origem: " . $dadosViagem['enderecoIda'] . ","
+                        . " Destino: " . $dadosViagem['enderecoChegada'] . ","
+                        . " Tipo de viagem: Chegada";
+
+                        $appointly_model = new Appointly_model();
+                        $appointly_model->insert_appointment($appointly_data);
+                    }
+
+                    if(!empty($dadosViagem['dataIda'])){
+                        $appointly_data = [];
+                        $appointly_data['rel_type'] = 'lead_related';
+                        $appointly_data['rel_id'] = $lead->row()->id;
+                        $appointly_data['google'] = true;
+                        $appointly_data['attendees'] = get_staff_user_id();
+                        $appointly_data['date'] = $dadosViagem['dataIda'];
+                        $appointly_data['address'] =  $dadosViagem['enderecoChegada'];
+                        $appointly_data['subject'] = "Transfer";
+                        $appointly_data['description'] = "Serviço: Transfer" 
+                        . " Nome: " . $lead->row()->name . ","
+                        . " Origem: " . $dadosViagem['enderecoIda'] . ","
+                        . " Destino: " . $dadosViagem['enderecoChegada'] . ","
+                        . " Tipo de viagem: Ida";
+
+                        $appointly_model = new Appointly_model();
+                        $appointly_model->insert_appointment($appointly_data);
+                    }
     
                 } 
                 
